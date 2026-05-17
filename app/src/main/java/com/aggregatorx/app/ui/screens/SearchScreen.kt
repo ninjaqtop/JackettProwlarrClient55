@@ -327,7 +327,7 @@ fun SearchScreen(
             NeonSearchBar(
                 query         = uiState.query,
                 onQueryChange = viewModel::updateQuery,
-                onSearch      = viewModel::search,
+                onSearch      = { viewModel.search() },
                 isLoading     = uiState.isSearching,
                 isPaused      = isPaused,
                 modifier      = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)

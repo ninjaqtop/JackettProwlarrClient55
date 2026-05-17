@@ -194,7 +194,9 @@ class ScrapingEngine @Inject constructor(
             }
         }
 
-        // Cache results only if caching is enabled AND we got successful results
+        // Only write to cache when caching is explicitly enabled AND we got successful results.
+        // When useCache=false (fresh search), never populate the cache so the next fresh search
+        // also hits the network rather than a stale entry written by a previous run.
         if (useCache && results.any { it.success }) {
             synchronized(resultCache) { resultCache[query] = CacheEntry(results) }
         }
@@ -563,7 +565,7 @@ class ScrapingEngine @Inject constructor(
     private fun extractText(el: Element, sel: String): String = el.select(sel).text().trim()
     private fun extractUrl(el: Element, sel: String, base: String): String = normalizeUrl(el.select(sel).attr("href"), base)
     private fun extractImageUrl(el: Element, sel: String, base: String): String = normalizeUrl(el.select(sel).attr("src"), base)
-    private fun extractTitleFromUrl(url: String): String? = try { url.substringAfterLast("/").replace("-", " ").replace("_", " ").capitalize() } catch (_: Exception) { null }
+    private fun extractTitleFromUrl(url: String): String? = try { url.substringAfterLast("/").replace("-", " ").replace("_", " ").replaceFirstChar { it.uppercase() } } catch (_: Exception) { null }
     private fun findDescriptionInDocument(doc: Document, url: String): String? = null
     private fun normalizeUrl(url: String, base: String): String = EngineUtils.normalizeUrl(url, base)
     private fun extractDomain(url: String): String = EngineUtils.extractDomain(url)

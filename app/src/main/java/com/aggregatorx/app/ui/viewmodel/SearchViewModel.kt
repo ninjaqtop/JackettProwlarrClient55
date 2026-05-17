@@ -76,15 +76,18 @@ class SearchViewModel @Inject constructor(
 
     /**
      * Execute search with fresh results guarantee.
-     * 
+     *
      * FRESH RESULTS BEHAVIOR:
-     * - isLoadMore=false: New query detected -> clears all caches, resets pagination, forces fresh scrape
-     * - isLoadMore=true: Load more for current query -> fetches next page while maintaining deduplication
-     * 
-     * PAGINATION:
-     * - First loop: Page 0 from each provider (as if typing on their site)
-     * - Pagination buttons increment page number for that provider
-     * - Each page is fetched fresh from the provider
+     * - isLoadMore=false: Always clears all caches, resets pagination, forces fresh scrape from
+     *   every enabled provider — exactly as if the user typed the query on each provider's own
+     *   search page. No cached results are ever shown for a new search initiation.
+     * - isLoadMore=true: Fetches the next page for the current query while keeping session-level
+     *   deduplication so the same URL never appears twice in a session.
+     *
+     * LOOP STRUCTURE:
+     * - Loop 1 (page 0): Real first-page results from each enabled provider.
+     * - Loop 2+ (pagination / token tab / AI tab): Related/similar results, preference-ranked
+     *   content learned from liked results, and automated token-discovered URLs.
      */
     fun search(isLoadMore: Boolean = false) {
         val query = _uiState.value.query.trim()
@@ -93,12 +96,13 @@ class SearchViewModel @Inject constructor(
         currentSearchJob?.cancel()
 
         currentSearchJob = viewModelScope.launch {
-            // Detect if this is a new query (fresh search) vs load more
-            val isNewQuery = query != lastSearchQuery
+            // isLoadMore=false always means a fresh search — clear everything regardless of
+            // whether the query text changed (covers panic refresh, same-query re-search, etc.)
+            val isNewQuery = !isLoadMore || query != lastSearchQuery
             lastSearchQuery = query
 
-            if (!isLoadMore || isNewQuery) {
-                // NEW SEARCH: Clear everything and start fresh
+            if (isNewQuery) {
+                // FRESH SEARCH: wipe all session state and caches before hitting providers
                 sessionSeenUrls.clear()
                 repository.clearSearchCache()
                 videoPreviewCache.clear()

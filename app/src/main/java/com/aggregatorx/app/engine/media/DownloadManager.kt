@@ -43,7 +43,7 @@ import javax.inject.Singleton
 class DownloadManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val videoExtractor: VideoExtractorEngine,
-    var downloadDirectory: String? = null
+    @javax.inject.Named("downloadDirectory") var downloadDirectory: String? = null
 ) {
     
     private val httpClient = OkHttpClient.Builder()
