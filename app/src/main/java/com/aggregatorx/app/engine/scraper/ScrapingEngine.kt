@@ -595,16 +595,18 @@ class ScrapingEngine @Inject constructor(
 
     private fun extractDomain(url: String): String = EngineUtils.extractDomain(url)
 
-    private fun extractTitleFromUrl(url: String): String? = try {
-        val path = java.net.URI(url).path ?: return null
-        val last = path.trimEnd('/').substringAfterLast('/')
-        if (last.length < 3) return null
-        last.replace(Regex("[-_]"), " ")
-            .replace(Regex("\\.[a-z]{2,4}$"), "")
-            .split(" ")
-            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
-            .takeIf { it.length > 2 }
-    } catch (_: Exception) { null }
+    private fun extractTitleFromUrl(url: String): String? {
+        return try {
+            val path = java.net.URI(url).path ?: return null
+            val last = path.trimEnd('/').substringAfterLast('/')
+            if (last.length < 3) return null
+            last.replace(Regex("[-_]"), " ")
+                .replace(Regex("\\.[a-z]{2,4}$"), "")
+                .split(" ")
+                .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                .takeIf { it.length > 2 }
+        } catch (_: Exception) { null }
+    }
 
     private fun findDescriptionInDocument(document: Document, url: String): String? =
         document.select("meta[name=description]").firstOrNull()?.attr("content")
