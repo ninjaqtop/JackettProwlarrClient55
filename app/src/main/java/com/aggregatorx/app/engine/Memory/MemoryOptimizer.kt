@@ -71,6 +71,10 @@ class MemoryOptimizer @Inject constructor(
         // Handle configuration changes if needed
     }
 
+    override fun onLowMemory() {
+        emergencyCleanup()
+    }
+
     data class MemoryInfo(
         val totalMemory: Long,
         val availableMemory: Long,
