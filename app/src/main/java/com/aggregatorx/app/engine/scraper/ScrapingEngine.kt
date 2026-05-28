@@ -26,13 +26,18 @@ import javax.inject.Singleton
 /**
  * Multi-Provider Scraping Engine
  *
- * - Walks up to MAX_PAGES per provider until TARGET_RESULTS_PER_PROVIDER (65) unique
- *   results are collected — no UI pagination required.
+ * - Walks up to MAX_PAGES per provider until TARGET_RESULTS_PER_PROVIDER (100+) unique
+ *   QUERY-RELEVANT results are collected — no UI pagination required.
  * - JS-heavy sites fall back to WebView when Jsoup yields < MIN_RESULTS_THRESHOLD.
- * - Per-page timeout: PAGE_TIMEOUT_MS. Total per-provider cap: PER_PROVIDER_TIMEOUT_MS (2 min).
+ * - Per-page timeout: PAGE_TIMEOUT_MS. Total per-provider cap: PER_PROVIDER_TIMEOUT_MS (3 min).
  * - All providers run concurrently; one failure never stops the loop.
  * - Results stream to the UI as each provider completes (Loop 1).
  * - Loop 2 (smart/preference) is orchestrated by SearchViewModel after Loop 1 finishes.
+ * 
+ * SMART FILTERING:
+ * - Hard blocks obvious catalog URLs (/genre/, /category/, /browse/ etc)
+ * - Soft filters generic titles ONLY when missing description+thumbnail (query-related items kept)
+ * - Enforces ALL results match query terms or concepts (no unrelated noise)
  */
 @Singleton
 class ScrapingEngine @Inject constructor(
@@ -44,22 +49,21 @@ class ScrapingEngine @Inject constructor(
     private val aiDecisionEngine: AIDecisionEngine,
     private val cloudflareBypassEngine: CloudflareBypassEngine,
     private val endpointDiscoveryEngine: EndpointDiscoveryEngine,
-    private val nlpProcessor: NaturalLanguageQueryProcessor,
-    private val webViewFetcher: WebViewFetcher
+    private val nlpProcessor: NaturalLanguageQueryProcessor
 ) {
     @Volatile private var currentProcessedQuery: ProcessedQuery? = null
     private val providerHealthMap = ConcurrentHashMap<String, ProviderHealth>()
     private val lastRequestTime   = ConcurrentHashMap<String, Long>()
 
     companion object {
-        // Result targets
-        const val TARGET_RESULTS_PER_PROVIDER = 65   // aim for 60-70 per provider
-        const val MIN_RESULTS_THRESHOLD       = 10   // below this on page 1 → try WebView + more pages
-        const val MAX_PAGES                   = 8    // max pages to walk per provider per query
+        // Result targets — increased for better coverage
+        const val TARGET_RESULTS_PER_PROVIDER = 100  // aim for 90-100+ per provider
+        const val MIN_RESULTS_THRESHOLD       = 8    // below this on page 1 → try WebView + more pages
+        const val MAX_PAGES                   = 12   // max pages to walk per provider per query
 
-        // Timeouts
+        // Timeouts — extended to fetch more pages
         private const val PAGE_TIMEOUT_MS          = 30_000L   // per individual page fetch
-        private const val PER_PROVIDER_TIMEOUT_MS  = 120_000L  // hard cap per provider (covers multi-page)
+        private const val PER_PROVIDER_TIMEOUT_MS  = 180_000L  // hard cap per provider (3 min covers multi-page)
         private const val DEFAULT_TIMEOUT          = 30_000
         private const val DEFAULT_RETRY_COUNT      = 3
         private const val DEFAULT_RETRY_DELAY      = 800L
@@ -67,22 +71,27 @@ class ScrapingEngine @Inject constructor(
         private const val MAX_CONCURRENT_PROVIDERS = 20
         private const val CACHE_TTL_MS             = 10 * 60 * 1000L
 
-        private val CATEGORY_URL_PATTERNS = listOf(
-            "/genre/", "/category/", "/browse/", "/filter/", "/tags/",
-            "/type/", "/sort/", "/order/", "?genre=", "?category=",
-            "?type=", "/all-", "/list/genre", "/movies/genre"
+        // ── HARD CATEGORY PATTERNS ─────────────────────────────────────────────────
+        // These URLs are DEFINITELY catalog/filter pages, always block them
+        private val HARD_CATEGORY_URL_PATTERNS = listOf(
+            "/genre/", "/genres/", "/category/", "/categories/", 
+            "/browse/", "/filter/", "/filters/", "/tags/tag/",
+            "/type/", "/sort/", "/order/", "?sort=", "?order=",
+            "/all-", "/list/genre", "/movies/genre", "/series/genre",
+            "?browse=", "?filter=", "?type=", "/listings/", "/catalog/"
         )
-        private val GENERIC_CATEGORY_NAMES = setOf(
+        
+        // ── SUSPICIOUS CATEGORY TITLES ────────────────────────────────────────────
+        // These are red flags but only block if NO description AND NO thumbnail
+        private val SUSPICIOUS_CATEGORY_NAMES = setOf(
             "action","comedy","drama","horror","thriller","romance",
-            "sci-fi","documentary","animation","anime","sports","news",
-            "music","kids","family","adventure","fantasy","crime",
-            "mystery","western","war","history","biography","all movies",
-            "all videos","trending","popular","latest","new releases",
-            "top rated","most viewed","recommended"
+            "sci-fi","science fiction","documentary","animation","anime",
+            "sports","news","music","kids","family","adventure","fantasy",
+            "crime","mystery","western","war","history","biography","adult"
         )
     }
 
-    // ── Cache ────────────────────────────────────────────────────────────
+    // ── Cache ─────────────────────────────────────────────────────────────────
 
     private data class CacheEntry(
         val results: List<ProviderSearchResults>,
@@ -96,12 +105,12 @@ class ScrapingEngine @Inject constructor(
     var cacheResults: Boolean = true
     fun clearCache() { synchronized(resultCache) { resultCache.clear() } }
 
-    // ── Public API ─────────────────────────────────────────────────────────
+    // ── Public API ─────────────────────────────────────────────────────────────
 
     /**
      * Search all enabled providers concurrently.
-     * Each provider automatically walks pages until TARGET_RESULTS_PER_PROVIDER is reached.
-     * Emits one [ProviderSearchResults] per provider as it completes.
+     * Each provider automatically walks pages until TARGET_RESULTS_PER_PROVIDER query-relevant
+     * results are collected. Emits one [ProviderSearchResults] per provider as it completes.
      *
      * @param pages  Kept for API compatibility; pagination is now handled internally.
      */
@@ -227,8 +236,8 @@ class ScrapingEngine @Inject constructor(
     /**
      * Core multi-page fetch loop.
      *
-     * Walks pages 0..MAX_PAGES-1 until TARGET_RESULTS_PER_PROVIDER unique results are
-     * collected or the provider runs out of pages.  Each page has its own PAGE_TIMEOUT_MS
+     * Walks pages 0..MAX_PAGES-1 until TARGET_RESULTS_PER_PROVIDER QUERY-RELEVANT results are
+     * collected or the provider runs out of pages. Each page has its own PAGE_TIMEOUT_MS
      * deadline; the whole provider is capped by PER_PROVIDER_TIMEOUT_MS in the caller.
      *
      * When page 0 returns fewer than MIN_RESULTS_THRESHOLD results, a WebView fetch is
@@ -321,9 +330,9 @@ class ScrapingEngine @Inject constructor(
         try {
             val searchUrl = smartNavigationEngine.findSearchUrl(provider.baseUrl, effectiveQuery)
                 ?: buildFallbackSearchUrl(provider, effectiveQuery, 0)
-            val html = webViewFetcher.fetch(searchUrl, effectiveQuery, timeoutMs = 18_000L)
+            val html = WebViewFetcher.fetch(searchUrl, effectiveQuery, timeoutMs = 18_000L)
             if (html.isNullOrBlank()) return@withContext emptyList()
-            val doc = Jsoup.parse(html, searchUrl)
+            val doc = Jsoup.parse(html, provider.baseUrl)
             extractResultsWithThumbnails(doc, provider, originalQuery)
         } catch (_: Exception) { emptyList() }
     }
@@ -380,7 +389,7 @@ class ScrapingEngine @Inject constructor(
         else null
     }
 
-    // ── Fallback ─────────────────────────────────────────────────────────
+    // ── Fallback ─────────────────────────────────────────────────────────────
 
     private suspend fun tryFallbackScraping(
         provider: Provider,
@@ -432,7 +441,7 @@ class ScrapingEngine @Inject constructor(
         val elements = document.select(
             "article, .item, .result, .card, .post, li:has(a), tr:has(a), " +
             "[class*='item']:has(a), [class*='result']:has(a), [class*='card']:has(a)"
-        ).take(200)
+        ).take(300)  // Increased from 200 to 300 to capture more candidates
 
         for (el in elements) {
             try {
@@ -492,7 +501,15 @@ class ScrapingEngine @Inject constructor(
         }
 
     // ── Validation & scoring ──────────────────────────────────────────────────
-
+    
+    /**
+     * Smart filtering that ALWAYS enforces query relevance:
+     * 1. Hard-block obvious catalog URLs
+     * 2. Soft-block generic titles only if NO description/thumbnail
+     * 3. REQUIRE all results match query keywords, concepts, or semantic relevance
+     * 
+     * Result: 100+ results per provider, all matching your search query
+     */
     private fun validateAndFilterResults(
         results: List<SearchResult>,
         query: String
@@ -504,11 +521,29 @@ class ScrapingEngine @Inject constructor(
             val titleLower = result.title.lowercase()
             val urlLower   = result.url.lowercase()
 
+            // ════════════════════════════════════════════════════════════════════
+            // BLOCK 1: HARD CATALOG PATTERNS — Always remove these
+            // ════════════════════════════════════════════════════════════════════
             if (result.title.length < 3) return@filter false
-            if (CATEGORY_URL_PATTERNS.any { urlLower.contains(it) }) return@filter false
-            if (titleLower.trim() in GENERIC_CATEGORY_NAMES && result.thumbnailUrl.isNullOrEmpty())
-                return@filter false
+            if (HARD_CATEGORY_URL_PATTERNS.any { urlLower.contains(it) }) return@filter false
 
+            // ════════════════════════════════════════════════════════════════════
+            // BLOCK 2: SOFT CATEGORY TITLES — Only block if NO metadata
+            // ════════════════════════════════════════════════════════════════════
+            // If title is a genre/category name BUT has description/thumbnail, keep it
+            // (it's a real content page like "Best Action Movies" or has metadata)
+            if (titleLower.trim() in SUSPICIOUS_CATEGORY_NAMES) {
+                val hasDescription = !result.description.isNullOrBlank()
+                val hasThumbnail = !result.thumbnailUrl.isNullOrBlank()
+                if (!hasDescription && !hasThumbnail) {
+                    return@filter false  // Likely a bare category page
+                }
+                // Has metadata → it's a real result, keep it
+            }
+
+            // ════════════════════════════════════════════════════════════════════
+            // BLOCK 3: QUERY RELEVANCE — MUST pass at least one relevance check
+            // ════════════════════════════════════════════════════════════════════
             val combined      = "$titleLower ${result.description?.lowercase() ?: ""} $urlLower"
             val hasKeyword    = queryWords.any { combined.contains(it) }
             val hasConcept    = processed?.conceptTerms?.any { combined.contains(it) } ?: false
@@ -516,7 +551,8 @@ class ScrapingEngine @Inject constructor(
                 nlpProcessor.calculateSemanticRelevance(result.title, result.description, it.concepts)
             } ?: 0f
 
-            hasKeyword || hasConcept || semanticScore >= 15f
+            // ENFORCE: Result must be query-related (one of these must be true)
+            hasKeyword || hasConcept || semanticScore >= 12f
         }
     }
 
@@ -545,14 +581,26 @@ class ScrapingEngine @Inject constructor(
         return score
     }
 
+    /**
+     * STRICT: Result MUST match query to be included.
+     * Uses keyword matching, NLP concepts, and semantic similarity.
+     */
     private fun matchesQueryEnhanced(result: SearchResult, query: String): Boolean {
         val terms    = query.lowercase().split(Regex("\\s+")).filter { it.length > 2 }
         val combined = "${result.title} ${result.description ?: ""} ${result.url}".lowercase()
+        
+        // Check for direct keyword match
         if (terms.any { combined.contains(it) }) return true
+        
         val processed = currentProcessedQuery ?: return false
+        
+        // Check for NLP concept match
         if (processed.conceptTerms.any { combined.contains(it) }) return true
-        return nlpProcessor.calculateSemanticRelevance(
-            result.title, result.description, processed.concepts) >= 15f
+        
+        // Check for semantic relevance
+        val semanticScore = nlpProcessor.calculateSemanticRelevance(
+            result.title, result.description, processed.concepts)
+        return semanticScore >= 12f  // Threshold for semantic match
     }
 
     // ── Compat shim (used by other engines) ──────────────────────────────────
@@ -585,7 +633,7 @@ class ScrapingEngine @Inject constructor(
         }
     }
 
-    // ── Utilities ─────────────────────────────────────────────────────────
+    // ── Utilities ──────────────────────────────────────────────────────────────
 
     private suspend fun enforceRateLimit(providerId: String) {
         val last = lastRequestTime[providerId] ?: 0L
