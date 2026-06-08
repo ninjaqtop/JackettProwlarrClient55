@@ -10,6 +10,7 @@ import com.aggregatorx.app.engine.analyzer.SmartNavigationEngine
 import com.aggregatorx.app.engine.nlp.NaturalLanguageQueryProcessor
 import com.aggregatorx.app.data.database.ProviderDao
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -132,13 +133,7 @@ class EnhancedScrapingEngine(
                 }
 
                 // Emit results as providers complete
-                searchJobs.forEach { job ->
-                    try {
-                        job.await()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Job await failed: ${e.message}")
-                    }
-                }
+                searchJobs.awaitAll()
             }
 
             Log.d(TAG, "✅ Search complete: $successCount succeeded, $failureCount failed")
@@ -231,7 +226,7 @@ class EnhancedScrapingEngine(
         var consecutiveEmptyPages = 0
 
         val processedQuery = currentProcessedQuery
-        val effectiveQuery = if (processedQuery?.isNaturalLanguage == true) {
+        val effectiveQuery = if (processedQuery != null && processedQuery.isNaturalLanguage) {
             processedQuery.searchQueries.firstOrNull() ?: query
         } else {
             query
