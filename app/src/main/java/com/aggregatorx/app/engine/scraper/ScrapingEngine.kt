@@ -10,6 +10,7 @@ import com.aggregatorx.app.engine.ai.AIDecisionEngine
 import com.aggregatorx.app.engine.nlp.NaturalLanguageQueryProcessor
 import com.aggregatorx.app.engine.nlp.ProcessedQuery
 import com.aggregatorx.app.engine.network.CloudflareBypassEngine
+import com.aggregatorx.app.engine.analyzer.SmartNavigationEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Semaphore
@@ -206,8 +207,7 @@ class ScrapingEngine @Inject constructor(
 
     /**
      * ✅ GUARANTEED: Search provider with automatic multi-page crawling
-     * 
-     * Flow:
+     * * Flow:
      * 1. Try Jsoup on page 1
      * 2. If < 8 results → immediately switch to WebView
      * 3. Otherwise → keep walking pages with Jsoup until 40+ results or timeout
@@ -321,8 +321,8 @@ class ScrapingEngine @Inject constructor(
                    consecutiveEmpty < 3 &&
                    !html.isNullOrEmpty()) {
                 
-                // Parse results from HTML
-                val doc = Jsoup.parse(html, provider.baseUrl)
+                // Parse results from HTML safely bypassing var smart-cast
+                val doc = Jsoup.parse(html!!, provider.baseUrl)
                 val pageResults = parseResultsFromDocument(doc, provider, null)
                 val filtered = filterQueryRelevantResults(pageResults, query)
 
@@ -336,7 +336,7 @@ class ScrapingEngine @Inject constructor(
                 }
 
                 // Try to get next page
-                html = tryGetNextPageHtml(html, provider, query, page) ?: break
+                html = tryGetNextPageHtml(html!!, provider, query, page) ?: break
                 page++
                 delay(500)
             }
@@ -513,7 +513,7 @@ class ScrapingEngine @Inject constructor(
     /**
      * Extract quality from text
      */
-    private fun extractQuality(text: String): String {
+    private fun extractQuality(text: String): String? {
         val upper = text.uppercase()
         return when {
             upper.contains("4K") -> "4K"
