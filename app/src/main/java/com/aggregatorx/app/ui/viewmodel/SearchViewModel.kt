@@ -63,7 +63,6 @@ class SearchViewModel @Inject constructor(
     val providerPages: StateFlow<Map<String, Int>> = _providerPages.asStateFlow()
 
     private val sessionSeenUrls   = mutableSetOf<String>()
-    private val videoPreviewCache = java.util.concurrent.ConcurrentHashMap<String, VideoPreviewResult>()
     private var currentSearchJob: Job? = null
     private var lastSearchQuery   = ""
 
@@ -75,8 +74,6 @@ class SearchViewModel @Inject constructor(
         }
         viewModelScope.launch { _likedUrls.value = repository.getAllLikedUrls() }
     }
-
-    // ── SEARCH ──────────────────────────────────────────────────────────────────
 
     fun search(isLoadMore: Boolean = false) {
         val query = _uiState.value.query.trim()
@@ -90,10 +87,9 @@ class SearchViewModel @Inject constructor(
             lastSearchQuery = query
 
             if (isNewQuery) {
-                Log.d(TAG, "📋 Clearing cache for new query")
+                Log.d(TAG, "📋 Clearing memory for new query")
                 sessionSeenUrls.clear()
                 repository.clearSearchCache()
-                videoPreviewCache.clear()
                 _providerResults.value  = emptyList()
                 _tokenResults.value     = emptyList()
                 _myAiResults.value      = emptyList()
@@ -103,9 +99,6 @@ class SearchViewModel @Inject constructor(
 
             _uiState.update { it.copy(isSearching = true, currentSearchQuery = query, error = null) }
             val loop1Results = if (isLoadMore) _providerResults.value.toMutableList() else mutableListOf()
-
-            // ── LOOP 1: Direct results - Real-time streaming ───────────────────
-            Log.d(TAG, "🎬 Loop 1: Direct provider search with real-time streaming")
             
             repository.searchAllProviders(query = query, forceRefresh = isNewQuery)
                 .catch { e ->
@@ -147,7 +140,6 @@ class SearchViewModel @Inject constructor(
             Log.d(TAG, "✅ Loop 1 complete: ${loop1Results.size} providers, ${sessionSeenUrls.size} total results")
             _uiState.update { it.copy(isSearching = false, searchCompleted = true) }
 
-            // ── LOOP 2: Smart / preference results (Background, non-blocking) ─
             _isLoop2Running.value = true
 
             launch {
@@ -227,12 +219,9 @@ class SearchViewModel @Inject constructor(
                     Log.w(TAG, "⚠️ Token discovery failed: ${e.message}")
                 }
             }
-
             _isLoop2Running.value = false
         }
     }
-
-    // ── VIDEO EXTRACTION ─────────────────────────────────────────────────────────
 
     fun extractVideoUrl(result: SearchResult) {
         viewModelScope.launch {
@@ -246,7 +235,11 @@ class SearchViewModel @Inject constructor(
                 }
                 
                 if (url != null) {
-                    _videoExtractionState.value = VideoExtractionState.Success(url)
+                    _videoExtractionState.value = VideoExtractionState.Success(
+                        videoUrl = url,
+                        title = result.title,
+                        headers = emptyMap()
+                    )
                 } else {
                     _videoExtractionState.value = VideoExtractionState.Error("No video URL found")
                 }
@@ -258,17 +251,10 @@ class SearchViewModel @Inject constructor(
 
     suspend fun extractVideoForPreview(url: String): VideoPreviewResult? {
         return try {
-            val cached = videoPreviewCache[url]
-            if (cached != null) return cached
-
             val extraction = videoExtractor.extractVideoUrl(url)
             if (extraction.success && extraction.videoUrl != null) {
-                val preview = VideoPreviewResult(videoUrl = extraction.videoUrl)
-                videoPreviewCache[url] = preview
-                preview
-            } else {
-                null
-            }
+                VideoPreviewResult(videoUrl = extraction.videoUrl)
+            } else null
         } catch (e: Exception) {
             Log.e(TAG, "Preview extraction failed: ${e.message}")
             null
@@ -279,59 +265,39 @@ class SearchViewModel @Inject constructor(
         _videoExtractionState.value = VideoExtractionState.Idle
     }
 
-    // ── DOWNLOAD MANAGEMENT ──────────────────────────────────────────────────────
-
     fun downloadResult(result: SearchResult) {
         viewModelScope.launch {
-            try {
-                downloadManager.downloadFromPage(result.url, result.title)
-            } catch (e: Exception) {
-                Log.e(TAG, "Download failed: ${e.message}")
-            }
+            try { downloadManager.downloadFromPage(result.url, result.title) } 
+            catch (e: Exception) { Log.e(TAG, "Download failed: ${e.message}") }
         }
     }
 
     fun downloadVideoUrl(videoUrl: String, title: String) {
         viewModelScope.launch {
-            try {
-                downloadManager.downloadDirect(videoUrl, title)
-            } catch (e: Exception) {
-                Log.e(TAG, "Download failed: ${e.message}")
-            }
+            try { downloadManager.downloadDirect(videoUrl, title) } 
+            catch (e: Exception) { Log.e(TAG, "Download failed: ${e.message}") }
         }
     }
-
-    // ── PREFERENCE TRACKING ──────────────────────────────────────────────────────
 
     fun toggleLike(result: SearchResult) {
         viewModelScope.launch {
             try {
                 repository.toggleLike(result)
                 _likedUrls.value = repository.getAllLikedUrls()
-            } catch (e: Exception) {
-                Log.e(TAG, "Like toggle failed: ${e.message}")
-            }
+            } catch (e: Exception) { Log.e(TAG, "Like toggle failed: ${e.message}") }
         }
     }
-
-    // ── CONTROL FUNCTIONS ────────────────────────────────────────────────────────
 
     fun pauseDiscovery() {
         _isDiscoveryPaused.value = true
         currentSearchJob?.cancel()
     }
 
-    fun resumeDiscovery() {
-        _isDiscoveryPaused.value = false
-    }
+    fun resumeDiscovery() { _isDiscoveryPaused.value = false }
     
-    fun toggleDiscoveryPause() {
-        if (_isDiscoveryPaused.value) resumeDiscovery() else pauseDiscovery()
-    }
+    fun toggleDiscoveryPause() { if (_isDiscoveryPaused.value) resumeDiscovery() else pauseDiscovery() }
 
-    fun updateQuery(newQuery: String) {
-        _uiState.update { it.copy(query = newQuery) }
-    }
+    fun updateQuery(newQuery: String) { _uiState.update { it.copy(query = newQuery) } }
     
     fun searchFromHistory(query: String) {
         updateQuery(query)
@@ -339,30 +305,20 @@ class SearchViewModel @Inject constructor(
     }
 
     fun clearSearchHistory() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(recentSearches = emptyList()) }
-        }
+        viewModelScope.launch { _uiState.update { it.copy(recentSearches = emptyList()) } }
     }
 
-    fun clearSearchCache() {
-        repository.clearSearchCache()
-    }
+    fun clearSearchCache() { repository.clearSearchCache() }
 
-    fun clearError() {
-        _uiState.update { it.copy(error = null) }
-    }
+    fun clearError() { _uiState.update { it.copy(error = null) } }
 
-    fun refreshProvider(providerId: String) {
-        search(isLoadMore = true)
-    }
+    fun refreshProvider(providerId: String) { search(isLoadMore = true) }
     
     fun panicRefresh() {
         clearSearchCache()
         search(isLoadMore = false)
     }
 }
-
-// ── DATA CLASSES ─────────────────────────────────────────────────────────────
 
 data class SearchUiState(
     val query: String = "",
@@ -380,6 +336,10 @@ data class SearchUiState(
 sealed class VideoExtractionState {
     data object Idle : VideoExtractionState()
     data class Extracting(val url: String) : VideoExtractionState()
-    data class Success(val videoUrl: String) : VideoExtractionState()
+    data class Success(
+        val videoUrl: String, 
+        val title: String, 
+        val headers: Map<String, String> = emptyMap()
+    ) : VideoExtractionState()
     data class Error(val message: String) : VideoExtractionState()
 }
