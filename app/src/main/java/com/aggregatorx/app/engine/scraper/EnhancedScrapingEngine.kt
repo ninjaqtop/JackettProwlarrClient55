@@ -8,10 +8,13 @@ import com.aggregatorx.app.engine.ranking.RankingEngine
 import com.aggregatorx.app.engine.analyzer.SiteAnalyzerEngine
 import com.aggregatorx.app.engine.analyzer.SmartNavigationEngine
 import com.aggregatorx.app.engine.nlp.NaturalLanguageQueryProcessor
+import com.aggregatorx.app.engine.nlp.ProcessedQuery
 import com.aggregatorx.app.data.database.ProviderDao
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Semaphore
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -51,13 +54,12 @@ class EnhancedScrapingEngine(
         const val WEBVIEW_TIMEOUT_MS = 30_000L       // WebView extended timeout
     }
 
-    private var currentProcessedQuery: NaturalLanguageQueryProcessor.ProcessedQuery? = null
+    private var currentProcessedQuery: ProcessedQuery? = null
     private val activeSearches = AtomicInteger(0)
 
     /**
      * PRIMARY ENTRY: Search all enabled providers for fresh results
-     * 
-     * GUARANTEED BEHAVIORS:
+     * * GUARANTEED BEHAVIORS:
      * - No caching (always fresh)
      * - Searches every enabled provider
      * - Completes loop even with provider failures
@@ -393,7 +395,7 @@ class EnhancedScrapingEngine(
      * Advanced result extraction with pattern recognition
      */
     private suspend fun extractResultsWithAdvancedParsing(
-        doc: Any,
+        doc: Document,
         provider: Provider,
         query: String
     ): List<SearchResult> {
@@ -463,7 +465,6 @@ class EnhancedScrapingEngine(
                 else -> 0.6f
             }
             
-            providerDao.updateProviderHealthScore(providerId, healthScore)
             providerDao.updateProviderStats(providerId, healthScore, elapsedMs)
         } catch (e: Exception) {
             Log.w(TAG, "Could not update metrics: ${e.message}")
@@ -486,11 +487,12 @@ class EnhancedScrapingEngine(
     /**
      * Fetch document from URL
      */
-    private suspend fun fetchDocument(url: String): Any {
-        // Delegates to existing document fetcher
+    private suspend fun fetchDocument(url: String): Document {
         return withContext(Dispatchers.IO) {
-            // Real implementation uses HTTP client
-            throw NotImplementedError("Use existing ScrapingEngine.fetchDocument()")
+            Jsoup.connect(url)
+                .userAgent("Mozilla/5.0")
+                .timeout(10000)
+                .get()
         }
     }
 
