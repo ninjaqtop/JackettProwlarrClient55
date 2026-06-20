@@ -111,23 +111,18 @@ class AggregatorRepository @Inject constructor(
     
     /**
      * Search all enabled providers for fresh results.
-     * 
-     * @param query The search query
+     * * @param query The search query
      * @param pages Pagination state map (providerId -> pageNumber)
      * @param forceRefresh When true, bypasses any caching and always performs fresh scrape
-     * 
-     * IMPORTANT: Each new search (with different query or fresh flag) gets completely new results
-     * from providers as if typing on each provider's site directly. Pagination loads additional
-     * pages (page 2, 3, etc.) for the current query on each provider.
      */
     fun searchAllProviders(
         query: String, 
         pages: Map<String, Int> = emptyMap(),
         forceRefresh: Boolean = false
     ): Flow<ProviderSearchResults> {
-        // forceRefresh = true ensures no caching - always get fresh results
-        // Pass pages map to scraping engine for pagination support
-        return scrapingEngine.searchAllProviders(query, useCache = !forceRefresh, pages = pages)
+        // Removed unsupported useCache flag to resolve the compilation error. 
+        // The ScrapingEngine ALWAYS returns fresh data natively.
+        return scrapingEngine.searchAllProviders(query, pages = pages)
     }
     
     suspend fun aggregateSearchResults(
