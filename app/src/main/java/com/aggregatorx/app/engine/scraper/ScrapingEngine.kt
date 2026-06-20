@@ -10,7 +10,7 @@ import com.aggregatorx.app.engine.ai.AIDecisionEngine
 import com.aggregatorx.app.engine.nlp.NaturalLanguageQueryProcessor
 import com.aggregatorx.app.engine.nlp.ProcessedQuery
 import com.aggregatorx.app.engine.network.CloudflareBypassEngine
-import com.aggregatorx.app.engine.analyzer.SmartNavigationEngine
+// Removed unresolved SmartNavigationEngine import
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Semaphore
@@ -28,7 +28,7 @@ class ScrapingEngine @Inject constructor(
     private val providerDao: ProviderDao,
     private val scrapingConfigDao: ScrapingConfigDao,
     private val siteAnalysisDao: SiteAnalysisDao,
-    private val smartNavigationEngine: SmartNavigationEngine,
+    // Removed unresolved SmartNavigationEngine from constructor
     private val smartContentClassifier: SmartContentClassifier,
     private val aiDecisionEngine: AIDecisionEngine,
     private val cloudflareBypassEngine: CloudflareBypassEngine,
@@ -39,6 +39,12 @@ class ScrapingEngine @Inject constructor(
     @Volatile private var currentProcessedQuery: ProcessedQuery? = null
     private val providerHealthMap = ConcurrentHashMap<String, ProviderHealth>()
     private val lastRequestTime   = ConcurrentHashMap<String, Long>()
+
+    // Added clearCache method to resolve AggregatorRepository error
+    fun clearCache() {
+        providerHealthMap.clear()
+        lastRequestTime.clear()
+    }
 
     companion object {
         const val TARGET_RESULTS_PER_PROVIDER = 100 
