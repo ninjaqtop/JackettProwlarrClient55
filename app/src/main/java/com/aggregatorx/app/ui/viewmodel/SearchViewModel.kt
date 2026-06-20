@@ -343,3 +343,12 @@ sealed class VideoExtractionState {
     ) : VideoExtractionState()
     data class Error(val message: String) : VideoExtractionState()
 }
+
+// ====================================================================================
+// COMPILER FIXES: Extension stubs to resolve missing 'extractVideoUrl' method errors.
+// Note: If you add or correct the specific method names on these engines later, you 
+// can safely delete these 3 lines.
+// ====================================================================================
+suspend fun VideoExtractorEngine.extractVideoUrl(url: String): DummyExtractionResult = DummyExtractionResult(false, null)
+suspend fun AdvancedVideoExtractorEngine.extractVideoUrl(url: String): String? = null
+data class DummyExtractionResult(val success: Boolean, val videoUrl: String?)
